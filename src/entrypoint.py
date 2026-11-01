@@ -118,9 +118,16 @@ def init():
     env.bot_id = env.bot_peer.id
 
 
+admin_runner = None
+
+
 async def pre():
     # wait for pre tasks
     await asyncio.gather(*pre_tasks)
+
+    from .admin.server import start
+    global admin_runner
+    admin_runner = await start()
 
     bare_target_matcher = r'(?P<target>@\w{4,}|(-100|\+)\d+)'
     target_matcher = rf'(\s+{bare_target_matcher})?'
@@ -279,6 +286,8 @@ async def lazy():
 
 async def post():
     logger.info('Exiting gracefully...')
+    if admin_runner is not None:
+        await admin_runner.cleanup()
     tasks = [
         asyncio.shield(loop.create_task(db.close())),
         loop.create_task(tgraph.close()),

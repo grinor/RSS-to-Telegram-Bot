@@ -155,6 +155,7 @@ class Sub(Model, Base):
     feed_id: int  # type hint stub
     title = fields.CharField(max_length=1024, null=True, description='Sub title, overriding feed title if set')
     tags = fields.CharField(max_length=255, null=True, description='Tags of the sub')
+    keyword_filter = fields.JSONField(null=True)
     interval = fields.SmallIntField(
         null=True,
         description='Interval of the sub monitor task, '

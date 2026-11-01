@@ -153,6 +153,11 @@ for dot_env_path in dict.fromkeys(dot_env_paths):  # remove duplicates while kee
         load_dotenv(dot_env_path, override=True)
         logger.info(f'Found .env file at "{dot_env_path}", loaded')
 
+# Web-restored runtime settings deliberately take effect only after a restart.
+web_restored_env = os.path.join(config_folder_path, 'web-restored.env')
+if os.path.isfile(web_restored_env):
+    load_dotenv(web_restored_env, override=True, interpolate=False)
+
 
 # ----- get version -----
 def __get_version():
