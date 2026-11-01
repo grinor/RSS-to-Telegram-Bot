@@ -1,7 +1,7 @@
 # 此分支新增 Web 管理后台
 
 支持私聊 / 频道 / 群聊订阅管理、按订阅的关键词过滤、ZIP 配置备份与合并还原。
-使用说明见 [Web 后台部署与使用](docs/web-admin.zh.md)。
+使用说明见 [Web 后台部署与使用](docs/web-admin.zh.md)（[English](docs/web-admin.md)）。
 
 <p align="center">
 <img src="docs/resources/RSStT_icon.svg" alt="RSS to Telegram Bot" width="100">

@@ -1,3 +1,8 @@
+## Web Admin additions in this branch
+
+Manage private-chat, channel, and group subscriptions, set per-subscription keyword filters, and export or merge-restore ZIP backups.
+See the [Web Admin setup and usage guide](docs/web-admin.md) ([简体中文](docs/web-admin.zh.md)).
+
 <p align="center">
 <img src="docs/resources/RSStT_icon.svg" alt="RSS to Telegram Bot" width="100">
 </p>

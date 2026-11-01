@@ -4,6 +4,7 @@
 
 | English                                                 | 简体中文                                    |
 |---------------------------------------------------------|-----------------------------------------|
+| [Web Admin](web-admin.md) | [Web 管理后台](web-admin.zh.md) |
 | [Formatting Settings Guidebook](formatting-settings.md) | 格式设置指南                                  |
 | [Deployment Guide](deployment-guide.md)                 | 部署指南                                    |
 | [Advanced Settings](advanced-settings.md)               | 高级设置                                    |
