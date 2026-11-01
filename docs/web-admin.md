@@ -75,6 +75,17 @@ On the **接收目标** page, choose **默认设置** to edit a destination's de
 
 The **全局配置** page controls the default and minimum polling intervals, subscription limits, and the message shown when a limit is reached. Changes take effect immediately. Deployment settings such as the bot token and proxies continue to be configured through environment variables.
 
+## Per-destination OPML import and export
+
+Each destination group has **Import OPML / Export OPML** buttons. You can also use the OPML button at the top of Subscriptions or next to a destination on the Destinations page, including destinations without subscriptions.
+
+- Export downloads only the selected destination's subscriptions, including paused subscriptions, using the original bot's `/export` format. RSS URLs and custom titles are preserved.
+- Import accepts `.opml` or XML files up to 2 MB and 1,000 feeds. Choose a destination and file, preview the count and existing subscriptions, then confirm. Preview does not fetch feeds or modify subscriptions.
+- Import reuses the bot's subscription logic and respects destination subscription limits. Nested folders and duplicate URLs are handled by the original OPML parser.
+- Like `/import`, importing an existing feed can update its custom title or reactivate that subscription. It does not remove subscriptions, and the other destinations' subscription settings remain unchanged.
+- Results show successful and unsuccessful entries, including subscriptions already present or over the limit. Feed fetch failures do not undo successful imports.
+- OPML carries URLs and titles, not keyword rules, message formatting, or pause state. Use ZIP backup/restore for those settings.
+
 ## Keyword filtering
 
 Rules belong to each **subscription**. The same RSS feed can have different rules when delivered to different destinations.

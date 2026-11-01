@@ -29,7 +29,7 @@ async def security(request, handler):
                 origin = request.headers.get('Origin')
                 if origin and origin != f'{request.scheme}://{request.host}':
                     raise web.HTTPForbidden(text='请求来源无效')
-                if request.method in ('POST', 'PUT', 'PATCH') and request.path != '/api/restore' and request.content_type != 'application/json':
+                if request.method in ('POST', 'PUT', 'PATCH') and request.path != '/api/restore' and not request.path.endswith('/opml') and request.content_type != 'application/json':
                     raise web.HTTPUnsupportedMediaType(text='需要 JSON 请求')
         response = await handler(request)
     except (ValueError, TypeError, KeyError) as exc:
@@ -188,6 +188,30 @@ async def restore(request):
     return web.json_response(result)
 
 
+
+async def target_opml(request):
+    from . import opml
+    uid = integer(int(request.match_info['id']), -(2**63), 2**63 - 1)
+    if request.method == 'GET':
+        content = await opml.export_feeds(uid)
+        return web.Response(body=content, content_type='application/xml', headers={
+            'Content-Disposition': f'attachment; filename="rsstt-{uid}.opml"'})
+    # Enforce the smaller OPML limit while streaming, including chunked uploads.
+    if request.content_length is not None and request.content_length > opml.MAX_OPML_BYTES:
+        raise ValueError('OPML 文件不能为空，且不能超过 2 MB')
+    raw = bytearray()
+    async for chunk in request.content.iter_chunked(65536):
+        raw.extend(chunk)
+        if len(raw) > opml.MAX_OPML_BYTES:
+            raise ValueError('OPML 文件不能为空，且不能超过 2 MB')
+    if request.query.get('preview') == '1':
+        return web.json_response(await opml.preview(uid, bytes(raw)))
+    if request.headers.get('X-Confirm-OPML') != 'import':
+        raise ValueError('请先预览并确认 OPML 导入')
+    lang = 'en' if request.headers.get('Accept-Language', '').startswith('en') else 'zh-Hans'
+    return web.json_response(await opml.import_feeds(uid, bytes(raw), lang=lang))
+
+
 def create_app(token):
     if not token or len(token) < 32:
         raise ValueError('WEB_ADMIN_TOKEN 至少需要 32 个字符')
@@ -206,7 +230,9 @@ def create_app(token):
         web.post('/api/targets', serialized(add_target)), web.post('/api/subscriptions', serialized(add_sub)),
         web.patch('/api/subscriptions/{id}', serialized(edit_sub)),
         web.delete('/api/subscriptions/{id}', serialized(delete_sub)),
-        web.patch('/api/targets/{id}', serialized(edit_user)), web.patch('/api/options', serialized(edit_options)),
+        web.patch('/api/targets/{id}', serialized(edit_user)),
+        web.get('/api/targets/{id}/opml', serialized(target_opml)),
+        web.post('/api/targets/{id}/opml', serialized(target_opml)), web.patch('/api/options', serialized(edit_options)),
         web.get('/api/backup', serialized(export)), web.post('/api/restore', serialized(restore)),
     ])
     return app

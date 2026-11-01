@@ -180,7 +180,31 @@ const EN = {
   "标题或标签过长": "The title or tags are too long.",
   "长度限制无效": "Invalid length threshold.",
   "全局配置字段无效": "Invalid global setting.",
-  "订阅限制提示最多 4096 个字符": "The subscription limit message allows at most 4096 characters."
+  "订阅限制提示最多 4096 个字符": "The subscription limit message allows at most 4096 characters.",
+  "OPML 导入 / 导出": "OPML import / export",
+  "导入 OPML": "Import OPML",
+  "导出 OPML": "Export OPML",
+  "选择 OPML 文件": "Choose an OPML file",
+  "预览导入": "Preview import",
+  "确认导入": "Confirm import",
+  "OPML 仅包含订阅地址与标题；关键词、格式和暂停状态请使用 ZIP 备份。": "OPML includes feed URLs and titles only. Use a ZIP backup for keyword rules, formatting, and paused status.",
+  "导入只作用于所选目标，不会删除其他订阅。与 /import 命令一致，已有订阅可能更新标题或重新启用。": "Import affects the selected destination without deleting other subscriptions. Like /import, it may update existing titles or reactivate subscriptions.",
+  "最多 2 MB、1000 个订阅源。请先预览再确认。": "Up to 2 MB and 1,000 feeds. Preview before confirming.",
+  "请先选择 OPML 文件": "Choose an OPML file first.",
+  "OPML 文件不能为空，且不能超过 2 MB": "The OPML file must be nonempty and at most 2 MB.",
+  "OPML XML 格式无效": "Invalid OPML XML.",
+  "请上传不含 DTD 的 OPML 文件": "Upload an OPML document without a DTD.",
+  "每次最多导入 1000 个订阅源": "Import at most 1,000 feeds at a time.",
+  "OPML 中的自定义标题过长": "An OPML custom title is too long.",
+  "OPML 文件中没有有效的订阅源": "No valid feeds found in this OPML file.",
+  "此接收目标暂无订阅可导出": "This destination has no subscriptions to export.",
+  "请先预览并确认 OPML 导入": "Preview and confirm the OPML import first.",
+  "目标：{target}": "Destination: {target}",
+  "共 {total} 个订阅源，其中 {existing} 个已订阅。": "{total} feeds, including {existing} already subscribed.",
+  "正在导入，请稍候…": "Importing, please wait…",
+  "正在校验 OPML…": "Validating OPML…",
+  "确认将 OPML 导入「{target}」？已有订阅可能更新标题或重新启用。": "Import OPML into “{target}”? Existing subscriptions may have their titles updated or be reactivated.",
+  "OPML 导入完成：成功 {success}，未导入 {failed}（含已订阅或超出上限）。": "OPML import complete: {success} succeeded, {failed} not imported (including already subscribed or over the limit)."
 };
 
 function preference(key, fallback) { try { return localStorage.getItem(key) || fallback; } catch { return fallback; } }
@@ -190,6 +214,7 @@ let theme = preference('rsstt-theme', window.matchMedia('(prefers-color-scheme: 
 if (!['light', 'dark'].includes(theme)) theme = 'light';
 const collapsedGroups = new Set();
 let previewSummary = null;
+let opmlPreview = null, opmlFile = null, opmlBusy = false;
 function t(key, values = {}) {
   const text = language === 'en' ? (EN[key] || key) : key;
   return text.replace(/\{(\w+)\}/g, (match, name) => values[name] === undefined ? match : String(values[name]));
@@ -244,6 +269,9 @@ function applyLanguage() {
     $('#target-heading').textContent = targetUser ? `${targetLabel(targetUser)} · ${t('默认设置')}` : t('添加接收目标');
     renderSubs(); renderTargets();
   }
+  const opmlSelected = $('#opml-target').value;
+  if (data) { targetOptions($('#opml-target')); $('#opml-target').value = opmlSelected; }
+  renderOPMLPreview();
   renderPreview();
 }
 const formats = () => ({
@@ -259,7 +287,7 @@ const formats = () => ({
 });
 function notice(message) { $('#notice').textContent = message; $('#notice').hidden = false; clearTimeout(noticeTimer); noticeTimer = setTimeout(() => $('#notice').hidden = true, 7000); }
 async function api(path, {method = 'GET', body, headers = {}} = {}) {
-  const opts = {method, headers: {...headers, Authorization: `Bearer ${token}`}};
+  const opts = {method, headers: {...headers, Authorization: `Bearer ${token}`, 'Accept-Language': language}};
   if (body !== undefined) { opts.body = body instanceof File ? body : JSON.stringify(body); if (!(body instanceof File)) opts.headers['Content-Type'] = 'application/json'; }
   const res = await fetch(path, opts);
   if (!res.ok) { const info = await res.json().catch(() => ({})); if (res.status === 401) logout(); throw new Error(info.error ? translateError(info.error) : t('请求失败 ({status})', {status: res.status})); }
@@ -298,6 +326,12 @@ function renderSubs() {
     heading.append(el('strong', u ? targetLabel(u) : String(uid)), el('span',
       t('{count} 条订阅 · {active} 条启用', {count: subscriptions.length, active: subscriptions.filter(s => s.state === 1).length}), 'group-count'));
     group.append(heading);
+    const tools = el('div', undefined, 'group-tools actions');
+    const importButton = el('button', t('导入 OPML'), 'secondary');
+    importButton.onclick = () => openOPML(uid);
+    const exportButton = el('button', t('导出 OPML'), 'secondary');
+    exportButton.onclick = () => run(() => exportOPML(uid));
+    tools.append(importButton, exportButton); group.append(tools);
     group.addEventListener('toggle', () => {
       if (group.isConnected && !term && !target) {
         if (group.open) collapsedGroups.delete(String(uid)); else collapsedGroups.add(String(uid));
@@ -327,7 +361,7 @@ function renderTargets() {
   for (const u of data.users) {
     const row = el('div', undefined, 'row target-row'), text = el('div');
     text.append(el('strong', targetLabel(u)), el('div', t('{count} 条订阅 · 默认间隔 {interval}{banned}', {count: data.subscriptions.filter(s => s.user_id === u.id).length, interval: u.interval ? t('{count} 分钟', {count: u.interval}) : t('跟随全局'), banned: u.state === -1 ? t(' · 已封禁') : ''}), 'muted'));
-    const b = el('button', t('默认设置'), 'secondary'); b.onclick = () => openTarget(u); row.append(text, b); $('#targets').append(row);
+    const b = el('button', t('默认设置'), 'secondary'); b.onclick = () => openTarget(u); const buttons = el('div', undefined, 'actions'); const opmlButton = el('button', 'OPML', 'secondary'); opmlButton.onclick = () => openOPML(u.id); buttons.append(opmlButton, b); row.append(text, buttons); $('#targets').append(row);
   }
   if (!data.users.length) $('#targets').append(el('p', t('暂无接收目标，请先向 Bot 发送 /start 或添加频道 / 群聊。'), 'muted'));
 }
@@ -391,3 +425,69 @@ $('#restore').onclick = () => run(async () => { if (!previewFile || !confirm(t('
 $('#language').onchange = e => { language = e.target.value; remember('rsstt-language', language); applyLanguage(); };
 $('#theme-toggle').onclick = () => { theme = theme === 'dark' ? 'light' : 'dark'; remember('rsstt-theme', theme); applyTheme(); };
 applyLanguage();
+
+function downloadFile(blob, filename) {
+  const link = el('a'), url = URL.createObjectURL(blob);
+  link.href = url; link.download = filename; link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+async function exportOPML(uid) {
+  const response = await api(`/api/targets/${uid}/opml`);
+  downloadFile(await response.blob(), `rsstt-${uid}.opml`);
+}
+function resetOPMLPreview() {
+  opmlPreview = null; opmlFile = null;
+  $('#opml-summary').hidden = true; $('#opml-feed-list').replaceChildren();
+  $('#opml-import').disabled = true; $('#opml-result').hidden = true;
+}
+function openOPML(uid = $('#target-filter').value) {
+  if (!data.users.length) return notice(t('暂无接收目标，请先向 Bot 发送 /start 或添加频道 / 群聊。'));
+  if (opmlBusy) return notice(t('正在导入，请稍候…'));
+  targetOptions($('#opml-target'));
+  if (uid) $('#opml-target').value = String(uid);
+  $('#opml-file').value = ''; resetOPMLPreview();
+  $('#opml-dialog').showModal();
+}
+function renderOPMLPreview() {
+  if (!opmlPreview) return;
+  const u = data.users.find(u => u.id === opmlPreview.user_id);
+  $('#opml-summary').textContent = [t('目标：{target}', {target: u ? targetLabel(u) : opmlPreview.user_id}),
+    t('共 {total} 个订阅源，其中 {existing} 个已订阅。', opmlPreview)].join('\n');
+  $('#opml-summary').hidden = false;
+  $('#opml-feed-list').replaceChildren(...opmlPreview.feeds.slice(0, 20).map(f => el('li', `${f.title || f.url}${f.title ? ' · ' + f.url : ''}`)));
+}
+function opmlControls(busy) {
+  opmlBusy = busy;
+  for (const id of ['opml-target', 'opml-file', 'opml-preview', 'opml-export']) $( `#${id}`).disabled = busy;
+  $('#opml-import').disabled = busy || !opmlPreview;
+}
+$('#opml-open').onclick = () => openOPML();
+$('#opml-target').onchange = resetOPMLPreview;
+$('#opml-file').onchange = resetOPMLPreview;
+$('#opml-export').onclick = () => run(() => exportOPML($('#opml-target').value));
+$('#opml-preview').onclick = () => run(async () => {
+  resetOPMLPreview();
+  const file = $('#opml-file').files[0], uid = $('#opml-target').value;
+  if (!file) throw Error(t('请先选择 OPML 文件'));
+  if (!file.size || file.size > 2 * 1024 * 1024) throw Error(t('OPML 文件不能为空，且不能超过 2 MB'));
+  opmlControls(true); $('#opml-result').textContent = t('正在校验 OPML…'); $('#opml-result').hidden = false;
+  try {
+    opmlPreview = await (await api(`/api/targets/${uid}/opml?preview=1`, {method: 'POST', body: file})).json();
+    opmlFile = file; renderOPMLPreview(); $('#opml-result').hidden = true;
+  } catch (error) { $('#opml-result').textContent = error.message; throw error; }
+  finally { opmlControls(false); }
+});
+$('#opml-import').onclick = () => run(async () => {
+  if (opmlBusy || !opmlFile || !opmlPreview) return;
+  const uid = opmlPreview.user_id, file = opmlFile, u = data.users.find(u => u.id === uid);
+  if (!confirm(t('确认将 OPML 导入「{target}」？已有订阅可能更新标题或重新启用。', {target: u ? targetLabel(u) : uid}))) return;
+  opmlControls(true); $('#opml-result').textContent = t('正在导入，请稍候…'); $('#opml-result').hidden = false;
+  try {
+    const result = await (await api(`/api/targets/${uid}/opml`, {method: 'POST', body: file, headers: {'X-Confirm-OPML': 'import'}})).json();
+    const message = t('OPML 导入完成：成功 {success}，未导入 {failed}（含已订阅或超出上限）。', result);
+    opmlPreview = null; opmlFile = null;
+    $('#opml-result').textContent = message + (result.details ? '\n\n' + result.details : '');
+    await refresh(); notice(message);
+  } catch (error) { $('#opml-result').textContent = error.message; throw error; }
+  finally { opmlControls(false); }
+});

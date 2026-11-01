@@ -151,6 +151,87 @@ class AdminTests(unittest.IsolatedAsyncioTestCase):
         await notifier._notify_sub_with_entry_idx(1, self.sub)
         self.assertEqual(notifier._do_send.await_count, 1)
 
+    async def test_opml_export_scoped_and_titles(self):
+        from lxml import etree
+        self.sub.title = '我的标题 & <工具>'
+        self.sub.state = 0
+        await self.sub.save()
+        extra = await db.Feed.create(title='别的源', link='https://other.example/rss')
+        await db.Sub.create(user_id=-10042, feed=extra)
+        r = await self.client.get('/api/targets/1/opml', headers=self.headers)
+        self.assertEqual(r.status, 200, await r.text())
+        root = etree.fromstring(await r.read())
+        outlines = root.findall('.//outline')
+        self.assertEqual(len(outlines), 1)
+        self.assertEqual(outlines[0].get('text'), self.sub.title)
+        self.assertEqual(outlines[0].get('xmlUrl'), self.feed.link)
+        from src.admin.opml import parse_opml
+        self.assertEqual(parse_opml(await r.read())[0]['title'], self.sub.title)
+        self.assertIn('rsstt-1.opml', r.headers['Content-Disposition'])
+        await db.User.create(id=2)
+        self.assertEqual((await self.client.get('/api/targets/2/opml', headers=self.headers)).status, 400)
+        self.assertEqual((await self.client.get('/api/targets/999/opml', headers=self.headers)).status, 404)
+        self.assertEqual((await self.client.get('/api/targets/1/opml')).status, 401)
+
+    async def test_opml_preview_import_preserves_other_targets(self):
+        await db.User.create(id=2)
+        r = await self.client.get('/api/targets/1/opml', headers=self.headers)
+        raw = await r.read()
+        r = await self.client.post('/api/targets/2/opml?preview=1', headers=self.headers, data=raw)
+        self.assertEqual(r.status, 200, await r.text())
+        self.assertEqual((await r.json())['total'], 1)
+        self.assertEqual(await db.Sub.filter(user_id=2).count(), 0)
+        r = await self.client.post('/api/targets/2/opml', headers=self.headers, data=raw)
+        self.assertEqual(r.status, 400)
+        r = await self.client.post('/api/targets/2/opml', headers={**self.headers, 'X-Confirm-OPML': 'import'}, data=raw)
+        self.assertEqual(r.status, 200, await r.text())
+        self.assertEqual((await r.json())['success'], 1)
+        imported = await db.Sub.get(user_id=2)
+        self.assertEqual(imported.feed_id, self.feed.id)
+        await self.other.refresh_from_db()
+        self.assertEqual(self.other.keyword_filter['include'], ['独立'])
+        r = await self.client.post('/api/targets/2/opml', headers={**self.headers, 'X-Confirm-OPML': 'import'}, data=raw)
+        result = await r.json()
+        self.assertEqual(result['success'], 0)
+        self.assertEqual(result['failed'], 1)
+        self.assertEqual(await db.Sub.filter(user_id=2).count(), 1)
+
+    async def test_opml_custom_title_nested_and_limit(self):
+        from src.admin.opml import parse_opml
+        raw = b'''<?xml version="1.0"?><opml version="2.0"><body><outline text="Folder">
+        <outline type="rss" text="Custom &amp; title" title="Original" xmlUrl="https://example.com/rss"/>
+        <outline type="rss" text="Duplicate" xmlUrl="https://example.com/rss"/>
+        </outline></body></opml>'''
+        feeds = parse_opml(raw)
+        self.assertEqual(feeds, [{'url': self.feed.link, 'title': 'Custom & title'}])
+        await db.User.create(id=2, sub_limit=0)
+        r = await self.client.post('/api/targets/2/opml', headers={**self.headers, 'X-Confirm-OPML': 'import'}, data=raw)
+        self.assertEqual((await r.json())['success'], 0)
+        self.assertFalse(await db.Sub.filter(user_id=2).exists())
+        await db.User.filter(id=2).update(sub_limit=1)
+        r = await self.client.post('/api/targets/2/opml', headers={**self.headers, 'X-Confirm-OPML': 'import'}, data=raw)
+        self.assertEqual((await r.json())['success'], 1)
+        self.assertEqual((await db.Sub.get(user_id=2)).title, 'Custom & title')
+
+    async def test_opml_invalid_xml_entities_and_sizes(self):
+        from src.admin.opml import parse_opml, MAX_OPML_BYTES
+        invalid = [b'<html/>', b'<opml>', b'<opml><body/></opml>',
+                   b'<opml><body><outline xmlUrl="file:///etc/passwd"/></body></opml>',
+                   b'<!DOCTYPE opml [<!ENTITY x SYSTEM "file:///etc/passwd">]><opml><body>&x;</body></opml>',
+                   '<!DOCTYPE opml [<!ENTITY x "text">]><opml><body>&x;</body></opml>'.encode('utf-16'),
+                   b'x' * (MAX_OPML_BYTES + 1)]
+        for raw in invalid:
+            with self.assertRaises(ValueError):
+                parse_opml(raw)
+        oversized = '<opml><body>' + ''.join(f'<outline xmlUrl="https://example.com/{i}"/>' for i in range(1001)) + '</body></opml>'
+        with self.assertRaises(ValueError):
+            parse_opml(oversized.encode())
+        r = await self.client.post('/api/targets/1/opml?preview=1', headers=self.headers, data=b'bad xml')
+        self.assertEqual(r.status, 400)
+        r = await self.client.post('/api/targets/1/opml?preview=1', headers=self.headers, data=b'x' * (MAX_OPML_BYTES + 1))
+        self.assertEqual(r.status, 400)
+        self.assertEqual(await db.Sub.all().count(), 2)
+
     async def test_transaction_rollback(self):
         saved = backup.read_backup(await backup.export_backup())
         saved['users'][0]['lang'] = 'en'
