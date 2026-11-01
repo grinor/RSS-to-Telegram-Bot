@@ -2,7 +2,7 @@
 
 [简体中文](web-admin.zh.md) | English
 
-This branch adds an optional web admin interface inside the existing bot process. It uses the same database, feed monitoring, and Telegram delivery pipeline as the bot. **The interface currently uses Chinese labels**; this guide explains its setup and operation in English.
+This branch adds an optional web admin interface inside the existing bot process. It uses the same database, feed monitoring, and Telegram delivery pipeline as the bot. The interface supports Chinese and English, with light and dark themes.
 
 This is a **superadministrator interface for one bot instance**. Anyone with the admin secret can view and edit all private-chat, channel, and group subscriptions stored by that instance. It does not manage other people's bots or multiple bot tokens.
 
@@ -46,7 +46,9 @@ Then open `http://127.0.0.1:8080` on your own computer. If you expose the admin 
 
 ## Subscriptions and destinations
 
-The navigation labels are:
+Use the language selector and theme button at the top of the page to switch between Chinese/English and light/dark mode. Your choices are remembered in this browser; on first visit, the page uses your browser language and system color preference. These preferences do not change bot settings or backup contents.
+
+When Chinese is selected, the navigation labels are:
 
 | Interface label | Meaning |
 | --- | --- |
@@ -57,7 +59,7 @@ The navigation labels are:
 
 ### Manage subscriptions
 
-The **订阅源** page lists subscriptions from the bot's database. You can search, filter by destination or status, add, delete, pause, enable, and edit subscriptions.
+The **Subscriptions / 订阅源** page groups subscriptions by destination. Each group shows its subscription and active counts; click its heading to collapse or expand it. Search and destination/status filters apply across groups, and matching groups expand automatically when searching or filtering by destination. You can search, filter by destination or status, add, delete, pause, enable, and edit subscriptions.
 
 Choose **添加订阅** to add an RSS URL and destination. Choose **编辑** on an existing subscription to change its custom title, tags, polling interval, message formatting, or keyword rules. An empty title uses the feed's title. Separate tags with spaces. An empty polling interval inherits the destination's default.
 
