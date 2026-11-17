@@ -63,7 +63,7 @@ The **Subscriptions / 订阅源** page groups subscriptions by destination. Each
 
 Choose **添加订阅** to add an RSS URL and destination. Choose **编辑** on an existing subscription to change its custom title, tags, polling interval, message formatting, or keyword rules. An empty title uses the feed's title. Separate tags with spaces. An empty polling interval inherits the destination's default.
 
-The RSS URL and destination identify a subscription and cannot be changed in the edit form. To change either, add the replacement subscription and then delete the old one.
+The subscription name and RSS URL are editable. An empty name uses the feed title. Changing the URL switches only this subscription in the selected destination and preserves its keyword rules, formatting, and paused state. Other destinations are unaffected. A new URL is validated before saving; validation failures or a URL already subscribed by the same destination leave the original subscription unchanged. The destination itself cannot be changed in the edit form.
 
 ### Add destinations and edit defaults
 

@@ -9,6 +9,7 @@ import unittest
 import zipfile
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
 
 _test_dir = tempfile.TemporaryDirectory()
 os.environ.update(TOKEN='test', MANAGER='1', NO_UVLOOP='1', MULTIPROCESSING='0',
@@ -95,6 +96,72 @@ class AdminTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.other.keyword_filter['include'], ['独立'])
         r = await self.client.patch(f'/api/subscriptions/{self.sub.id}', headers=self.headers, json={'interval': 0})
         self.assertEqual(r.status, 400)
+
+    async def test_edit_url_preserves_subscription_and_other_destinations(self):
+        rule = {'include': ['保留'], 'exclude': [], 'mode': 'any', 'scope': 'all'}
+        await db.Sub.filter(id=self.sub.id).update(keyword_filter=rule, state=0, tags='tag', interval=23)
+        destination = await db.Feed.create(title='目标源', link='https://new.example/rss', entry_hashes=['history'])
+        r = await self.client.patch(f'/api/subscriptions/{self.sub.id}', headers=self.headers,
+                                    json={'url': destination.link, 'title': '新名称'})
+        self.assertEqual(r.status, 200, await r.text())
+        await self.sub.refresh_from_db(); await self.other.refresh_from_db(); await self.feed.refresh_from_db()
+        self.assertEqual(self.sub.feed_id, destination.id)
+        self.assertEqual((self.sub.title, self.sub.state, self.sub.tags, self.sub.interval), ('新名称', 0, 'tag', 23))
+        self.assertEqual(self.sub.keyword_filter, rule)
+        self.assertEqual(self.other.feed_id, self.feed.id)
+        self.assertEqual(self.feed.link, 'https://example.com/rss')
+        await destination.refresh_from_db()
+        self.assertEqual(destination.entry_hashes, ['history'])
+        r = await self.client.patch(f'/api/subscriptions/{self.sub.id}', headers=self.headers, json={'title': ''})
+        self.assertEqual(r.status, 200)
+        await self.sub.refresh_from_db()
+        self.assertIsNone(self.sub.title)
+
+    async def test_edit_url_conflict_and_failed_validation_leave_original(self):
+        destination = await db.Feed.create(title='已订阅', link='https://new.example/rss')
+        await db.Sub.create(user_id=self.u.id, feed=destination)
+        for link in (destination.link, 'file:///tmp/test'):
+            r = await self.client.patch(f'/api/subscriptions/{self.sub.id}', headers=self.headers,
+                                        json={'url': link, 'title': '不应保存'})
+            self.assertEqual(r.status, 400, await r.text())
+        with patch('src.web.feed_get', new=AsyncMock(return_value=SimpleNamespace(rss_d=None))):
+            r = await self.client.patch(f'/api/subscriptions/{self.sub.id}', headers=self.headers,
+                                        json={'url': 'https://broken.example/rss', 'title': '不应保存'})
+            self.assertEqual(r.status, 400, await r.text())
+        await self.sub.refresh_from_db()
+        self.assertEqual(self.sub.feed_id, self.feed.id)
+        self.assertIsNone(self.sub.title)
+
+    async def test_edit_url_fetches_redirect_and_seeds_history(self):
+        from feedparser import FeedParserDict
+        fetched = SimpleNamespace(
+            url='https://redirected.example/rss',
+            rss_d=FeedParserDict(feed=FeedParserDict(title='新的源'), entries=[{'guid': 'old-article'}]),
+            web_response=SimpleNamespace(etag='etag', last_modified=None),
+            calc_next_check_as_per_server_side_cache=lambda: None)
+        with patch('src.web.feed_get', new=AsyncMock(return_value=fetched)):
+            r = await self.client.patch(f'/api/subscriptions/{self.sub.id}', headers=self.headers,
+                                        json={'url': 'https://new.example/rss', 'title': '我的名称'})
+        self.assertEqual(r.status, 200, await r.text())
+        await self.sub.refresh_from_db()
+        feed = await db.Feed.get(id=self.sub.feed_id)
+        self.assertEqual(feed.link, fetched.url)
+        self.assertEqual(feed.title, '新的源')
+        self.assertEqual(len(feed.entry_hashes), 1)
+        self.assertEqual(feed.etag, 'etag')
+        # Reuse the fetched feed across destinations without replacing its history.
+        with patch('src.web.feed_get', new=AsyncMock(return_value=fetched)):
+            r = await self.client.patch(f'/api/subscriptions/{self.other.id}', headers=self.headers,
+                                        json={'url': 'https://alias.example/rss'})
+        self.assertEqual(r.status, 200, await r.text())
+        await self.other.refresh_from_db()
+        self.assertEqual(self.other.feed_id, feed.id)
+        with patch('src.web.feed_get', new=AsyncMock(return_value=fetched)):
+            r = await self.client.patch(f'/api/subscriptions/{self.sub.id}', headers=self.headers,
+                                        json={'url': 'https://second-alias.example/rss', 'title': '重命名'})
+        self.assertEqual(r.status, 200, await r.text())
+        await self.sub.refresh_from_db()
+        self.assertEqual(self.sub.title, '重命名')
 
     async def test_create_and_delete_with_existing_feed(self):
         new_user = await db.User.create(id=2)

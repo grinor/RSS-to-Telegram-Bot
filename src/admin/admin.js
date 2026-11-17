@@ -53,6 +53,10 @@ const EN = {
   "关闭": "Close",
   "RSS 地址": "RSS URL",
   "自定义标题": "Custom title",
+  "订阅名称": "Subscription name",
+  "修改名称和网址仅影响当前接收目标下的这条订阅；留空名称使用源标题。": "Name and URL changes affect only this subscription in the selected destination. Leave the name empty to use the feed title.",
+  "无法读取新 RSS 地址，请检查网址后重试": "Unable to read the new RSS URL. Check the address and try again.",
+  "此接收目标已订阅该 RSS 地址，请编辑已有订阅": "This destination already subscribes to that RSS URL. Edit the existing subscription instead.",
   "留空使用源标题": "Leave empty to use the feed title",
   "标签": "Tags",
   "多个标签用空格分隔": "Separate tags with spaces",
@@ -379,9 +383,11 @@ function buildOptions(container, inherited) {
   for (const [name, value] of Object.entries(previous)) { const field = container.querySelector(`[name="${name}"]`); if (field) field.value = value; }
 }
 function openSub(sub = null, selectedTarget = $('#target-filter').value) {
+  $('#sub-error').hidden = true;
   const f = $('#sub-form'); f.reset(); buildOptions($('#sub-options'), true); targetOptions(f.elements.user_id);
   f.elements.id.value = sub ? sub.id : ''; $('#sub-heading').textContent = sub ? t('编辑订阅') : t('添加订阅');
-  for (const name of ['user_id', 'url']) f.elements[name].disabled = !!sub;
+  f.elements.user_id.disabled = !!sub;
+  f.elements.url.disabled = false;
   if (sub) {
     for (const key of ['title', 'tags', 'state', 'interval', ...Object.keys(formats()), 'length_limit']) f.elements[key].value = sub[key] ?? '';
     f.elements.user_id.value = String(sub.user_id); f.elements.url.value = sub.feed.link;
@@ -407,15 +413,23 @@ document.querySelectorAll('[data-page]').forEach(b => b.onclick = () => { docume
 document.querySelectorAll('.close-dialog').forEach(b => b.onclick = () => b.closest('dialog').close());
 ['search', 'target-filter', 'state-filter'].forEach(id => $(`#${id}`).addEventListener('input', renderSubs));
 $('#add-sub').onclick = () => openSub(); $('#add-target').onclick = () => openTarget();
-$('#sub-form').onsubmit = e => { e.preventDefault(); run(async () => {
-  const f = e.target, id = f.elements.id.value, out = readOptions(f);
-  out.title = f.elements.title.value || null; out.tags = f.elements.tags.value || null; out.state = Number(f.elements.state.value);
-  const words = key => f.elements[key].value.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-  out.keyword_filter = {include: words('include'), exclude: words('exclude'), mode: f.elements.mode.value, scope: f.elements.scope.value};
-  if (id) await mutate(`/api/subscriptions/${id}`, 'PATCH', out);
-  else await mutate('/api/subscriptions', 'POST', {user_id: Number(f.elements.user_id.value), url: f.elements.url.value, options: out});
-  $('#sub-dialog').close();
-}); };
+$('#sub-form').onsubmit = async e => {
+  e.preventDefault();
+  const f = e.target, save = f.querySelector('[type=submit]');
+  if (save.disabled) return;
+  save.disabled = true; $('#sub-error').hidden = true;
+  try {
+    const id = f.elements.id.value, out = readOptions(f);
+    out.title = f.elements.title.value || null; out.tags = f.elements.tags.value || null; out.state = Number(f.elements.state.value);
+    const words = key => f.elements[key].value.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    out.keyword_filter = {include: words('include'), exclude: words('exclude'), mode: f.elements.mode.value, scope: f.elements.scope.value};
+    if (id) await mutate(`/api/subscriptions/${id}`, 'PATCH', {...out, url: f.elements.url.value.trim()});
+    else await mutate('/api/subscriptions', 'POST', {user_id: Number(f.elements.user_id.value), url: f.elements.url.value, options: out});
+    $('#sub-dialog').close();
+  } catch (error) {
+    $('#sub-error').textContent = error.message; $('#sub-error').hidden = false;
+  } finally { save.disabled = false; }
+};
 $('#target-form').onsubmit = e => { e.preventDefault(); run(async () => { const f = e.target, id = f.elements.id.value; if (id) await mutate(`/api/targets/${id}`, 'PATCH', readOptions(f)); else await mutate('/api/targets', 'POST', {target: f.elements.target.value.trim()}); $('#target-dialog').close(); }); };
 $('#settings-form').onsubmit = e => { e.preventDefault(); run(async () => { const values = Object.fromEntries(new FormData(e.target)); for (const k in values) if (k !== 'sub_limit_reached_message') values[k] = Number(values[k]); await mutate('/api/options', 'PATCH', values); }); };
 $('#export').onclick = () => run(async () => { const response = await api(`/api/backup?runtime=${$('#include-runtime').checked ? 1 : 0}`); const link = el('a'); const url = URL.createObjectURL(await response.blob()); link.href = url; link.download = `rsstt-backup-${new Date().toISOString().slice(0,10)}.zip`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); });

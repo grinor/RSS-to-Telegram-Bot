@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 from aiohttp import web
 from tortoise.exceptions import IntegrityError, DoesNotExist
+from tortoise.transactions import in_transaction
 from .. import db, env
 from . import backup
 from .validation import options, global_options, integer, url
@@ -121,11 +122,46 @@ async def add_sub(request):
 
 async def edit_sub(request):
     from ..command.inner.utils import update_interval
+    from .. import web as feed_web
+    from ..command.inner.utils import calculate_update
+    from ..parsing.utils import ensure_plain
     sub = await db.Sub.get(id=int(request.match_info['id']))
-    values = options(await body(request))
-    if values:
+    data = await body(request)
+    link = url(data.pop('url')) if 'url' in data else None
+    values = options(data)
+    old_feed_id = sub.feed_id
+    old_feed = await db.Feed.get(id=old_feed_id)
+    feed = old_feed
+    defaults = None
+    if link is not None and link != old_feed.link:
+        feed = await db.Feed.get_or_none(link=link)
+        if feed is None:
+            # Validate and seed history before switching, so old articles are not resent.
+            fetched = await feed_web.feed_get(link, verbose=False)
+            if fetched.rss_d is None:
+                raise ValueError('无法读取新 RSS 地址，请检查网址后重试')
+            link = url(fetched.url)
+            feed = await db.Feed.get_or_none(link=link)
+            if feed is None:
+                title = fetched.rss_d.feed.get('title') or ''
+                defaults = {
+                    'title': (await ensure_plain(title))[:1024],
+                    'entry_hashes': list(calculate_update(None, fetched.rss_d.entries)[0]),
+                    'etag': fetched.web_response.etag,
+                    'last_modified': fetched.web_response.last_modified,
+                    'next_check_time': fetched.calc_next_check_as_per_server_side_cache(),
+                }
+        async with in_transaction():
+            if feed is None:
+                feed, _ = await db.Feed.get_or_create(link=link, defaults=defaults)
+            if await db.Sub.filter(user_id=sub.user_id, feed_id=feed.id).exclude(id=sub.id).exists():
+                raise ValueError('此接收目标已订阅该 RSS 地址，请编辑已有订阅')
+            await db.Sub.filter(id=sub.id).update(feed_id=feed.id, **values)
+    elif values:
         await db.Sub.filter(id=sub.id).update(**values)
-        await update_interval(sub.feed_id)
+    await update_interval(feed.id)
+    if feed.id != old_feed_id:
+        await update_interval(old_feed_id)
     return web.json_response({'ok': True})
 
 
