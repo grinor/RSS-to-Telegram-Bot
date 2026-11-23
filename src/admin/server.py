@@ -121,13 +121,15 @@ async def add_sub(request):
 
 
 async def edit_sub(request):
-    from ..command.inner.utils import update_interval
+    from ..command.inner.utils import update_interval, check_sub_limit
     from .. import web as feed_web
     from ..command.inner.utils import calculate_update
     from ..parsing.utils import ensure_plain
     sub = await db.Sub.get(id=int(request.match_info['id']))
     data = await body(request)
     link = url(data.pop('url')) if 'url' in data else None
+    uid = integer(data.pop('user_id'), -(2**63), 2**63 - 1) if 'user_id' in data else sub.user_id
+    await db.User.get(id=uid)
     values = options(data)
     old_feed_id = sub.feed_id
     old_feed = await db.Feed.get(id=old_feed_id)
@@ -151,12 +153,17 @@ async def edit_sub(request):
                     'last_modified': fetched.web_response.last_modified,
                     'next_check_time': fetched.calc_next_check_as_per_server_side_cache(),
                 }
+    if (link is not None and link != old_feed.link) or uid != sub.user_id:
         async with in_transaction():
             if feed is None:
                 feed, _ = await db.Feed.get_or_create(link=link, defaults=defaults)
-            if await db.Sub.filter(user_id=sub.user_id, feed_id=feed.id).exclude(id=sub.id).exists():
+            if await db.Sub.filter(user_id=uid, feed_id=feed.id).exclude(id=sub.id).exists():
                 raise ValueError('此接收目标已订阅该 RSS 地址，请编辑已有订阅')
-            await db.Sub.filter(id=sub.id).update(feed_id=feed.id, **values)
+            if uid != sub.user_id:
+                exceeded, _, _, _ = await check_sub_limit(uid)
+                if exceeded:
+                    raise ValueError('所选接收目标的订阅数量已达上限')
+            await db.Sub.filter(id=sub.id).update(user_id=uid, feed_id=feed.id, **values)
     elif values:
         await db.Sub.filter(id=sub.id).update(**values)
     await update_interval(feed.id)

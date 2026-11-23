@@ -163,6 +163,64 @@ class AdminTests(unittest.IsolatedAsyncioTestCase):
         await self.sub.refresh_from_db()
         self.assertEqual(self.sub.title, '重命名')
 
+    async def test_edit_all_subscription_options_and_move(self):
+        from src.admin.validation import SUB_FIELDS
+        await db.User.create(id=2, interval=37)
+        await db.Sub.filter(id=self.other.id).update(interval=61)
+        values = {
+            'title': '全部修改', 'tags': '新标签', 'state': 1, 'interval': None,
+            'length_limit': 1234, 'notify': 0, 'send_mode': 2, 'link_preview': 1,
+            'display_author': -1, 'display_via': -2, 'display_title': 1,
+            'display_entry_tags': -1, 'style': 1, 'display_media': -1,
+            'keyword_filter': {'include': ['修改'], 'exclude': ['广告'], 'mode': 'all', 'scope': 'title'},
+        }
+        self.assertEqual(set(values), SUB_FIELDS)
+        r = await self.client.patch(f'/api/subscriptions/{self.sub.id}', headers=self.headers,
+                                    json={**values, 'user_id': 2, 'url': self.feed.link})
+        self.assertEqual(r.status, 200, await r.text())
+        await self.sub.refresh_from_db(); await self.other.refresh_from_db(); await self.feed.refresh_from_db()
+        self.assertEqual(self.sub.user_id, 2)
+        for key, value in values.items():
+            self.assertEqual(getattr(self.sub, key), value, key)
+        self.assertEqual(self.feed.interval, 37)
+        self.assertEqual(self.other.user_id, -10042)
+        self.assertEqual(self.other.keyword_filter['include'], ['独立'])
+        # Explicit settings can all be reset to inheritance without changing identity.
+        inherited = {key: -100 for key in values if key not in {'title', 'tags', 'state', 'interval', 'keyword_filter'}}
+        inherited.update(title=None, tags=None, interval=None, keyword_filter=None, state=0)
+        r = await self.client.patch(f'/api/subscriptions/{self.sub.id}', headers=self.headers, json=inherited)
+        self.assertEqual(r.status, 200, await r.text())
+        await self.sub.refresh_from_db()
+        for key, value in inherited.items():
+            self.assertEqual(getattr(self.sub, key), value, key)
+
+    async def test_edit_target_conflict_limits_and_missing_target(self):
+        for payload, status in [
+            ({'user_id': -10042, 'title': '不保存'}, 400),
+            ({'user_id': 999, 'title': '不保存'}, 404),
+            ({'user_id': True}, 400),
+        ]:
+            r = await self.client.patch(f'/api/subscriptions/{self.sub.id}', headers=self.headers, json=payload)
+            self.assertEqual(r.status, status, await r.text())
+        await db.User.create(id=2, sub_limit=0)
+        r = await self.client.patch(f'/api/subscriptions/{self.sub.id}', headers=self.headers,
+                                    json={'user_id': 2, 'title': '不保存'})
+        self.assertEqual(r.status, 400, await r.text())
+        await self.sub.refresh_from_db()
+        self.assertEqual(self.sub.user_id, 1)
+        self.assertIsNone(self.sub.title)
+
+    async def test_edit_target_and_url_together(self):
+        await db.User.create(id=2)
+        new_feed = await db.Feed.create(title='新源', link='https://new.example/rss', entry_hashes=['keep'])
+        r = await self.client.patch(f'/api/subscriptions/{self.sub.id}', headers=self.headers,
+                                    json={'user_id': 2, 'url': new_feed.link, 'title': '移至新目标', 'state': 0})
+        self.assertEqual(r.status, 200, await r.text())
+        await self.sub.refresh_from_db(); await self.other.refresh_from_db()
+        self.assertEqual((self.sub.user_id, self.sub.feed_id, self.sub.title, self.sub.state),
+                         (2, new_feed.id, '移至新目标', 0))
+        self.assertEqual(self.other.feed_id, self.feed.id)
+
     async def test_create_and_delete_with_existing_feed(self):
         new_user = await db.User.create(id=2)
         r = await self.client.post('/api/subscriptions', headers=self.headers,

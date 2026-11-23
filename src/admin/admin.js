@@ -54,7 +54,8 @@ const EN = {
   "RSS 地址": "RSS URL",
   "自定义标题": "Custom title",
   "订阅名称": "Subscription name",
-  "修改名称和网址仅影响当前接收目标下的这条订阅；留空名称使用源标题。": "Name and URL changes affect only this subscription in the selected destination. Leave the name empty to use the feed title.",
+  "所选接收目标的订阅数量已达上限": "The selected destination has reached its subscription limit.",
+  "所有订阅设置均可修改，包括接收目标和 RSS 地址。仅修改此条订阅；留空名称使用源标题。": "All subscription settings are editable, including the destination and RSS URL. Only this subscription is changed. Leave the name empty to use the feed title.",
   "无法读取新 RSS 地址，请检查网址后重试": "Unable to read the new RSS URL. Check the address and try again.",
   "此接收目标已订阅该 RSS 地址，请编辑已有订阅": "This destination already subscribes to that RSS URL. Edit the existing subscription instead.",
   "留空使用源标题": "Leave empty to use the feed title",
@@ -386,7 +387,7 @@ function openSub(sub = null, selectedTarget = $('#target-filter').value) {
   $('#sub-error').hidden = true;
   const f = $('#sub-form'); f.reset(); buildOptions($('#sub-options'), true); targetOptions(f.elements.user_id);
   f.elements.id.value = sub ? sub.id : ''; $('#sub-heading').textContent = sub ? t('编辑订阅') : t('添加订阅');
-  f.elements.user_id.disabled = !!sub;
+  f.elements.user_id.disabled = false;
   f.elements.url.disabled = false;
   if (sub) {
     for (const key of ['title', 'tags', 'state', 'interval', ...Object.keys(formats()), 'length_limit']) f.elements[key].value = sub[key] ?? '';
@@ -423,7 +424,7 @@ $('#sub-form').onsubmit = async e => {
     out.title = f.elements.title.value || null; out.tags = f.elements.tags.value || null; out.state = Number(f.elements.state.value);
     const words = key => f.elements[key].value.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
     out.keyword_filter = {include: words('include'), exclude: words('exclude'), mode: f.elements.mode.value, scope: f.elements.scope.value};
-    if (id) await mutate(`/api/subscriptions/${id}`, 'PATCH', {...out, url: f.elements.url.value.trim()});
+    if (id) await mutate(`/api/subscriptions/${id}`, 'PATCH', {...out, user_id: Number(f.elements.user_id.value), url: f.elements.url.value.trim()});
     else await mutate('/api/subscriptions', 'POST', {user_id: Number(f.elements.user_id.value), url: f.elements.url.value, options: out});
     $('#sub-dialog').close();
   } catch (error) {
